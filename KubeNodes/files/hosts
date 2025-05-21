@@ -1,0 +1,17 @@
+127.0.0.1	localhost
+::1		localhost ip6-localhost ip6-loopback
+ff02::1		ip6-allnodes
+ff02::2		ip6-allrouters
+
+127.0.1.1	raspberrypi
+
+192.168.1.50	pi1.jayflory.net pi1
+192.168.1.51	pi2.jayflory.net pi2
+192.168.1.52	pi3.jayflory.net pi3
+192.168.1.53	pi4.jayflory.net pi4
+192.168.1.54	pi5.jayflory.net pi5
+192.168.1.55	pi6.jayflory.net pi6
+192.168.1.56	pi7.jayflory.net pi7
+192.168.1.57	pi8.jayflory.net pi8
+192.168.1.58	pi9.jayflory.net pi9
+192.168.1.59	pi10.jayflory.net pi10

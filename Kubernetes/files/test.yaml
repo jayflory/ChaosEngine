@@ -1,0 +1,117 @@
+---
+# Create a test namespace
+kind: Namespace
+apiVersion: v1
+metadata:
+  name: test
+  labels:
+    k8s-app: test
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-server1
+  namespace: test
+spec:
+  storageClassName: kadalu.ext-config
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-web
+  labels:
+    app: test-web
+  namespace: test
+spec:
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  selector:
+    app: test-web
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-web
+  labels:
+    app: test-web
+  namespace: test
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: test-web
+  template:
+    metadata:
+      labels:
+        app: test-web
+    spec:
+      hostAliases:
+      - ip: "192.168.1.20"
+        hostnames:
+        - "test.internal"
+        - "test.jayflory.net"
+      containers:
+      - name: test-web
+        image: httpd:latest
+        ports:
+        - name: http
+          containerPort: 80
+        resources:
+          requests:
+            cpu: 200m
+            memory: 1024Mi
+        volumeMounts:
+        - name: config
+          mountPath: /usr/local/apache2
+        workingDir: /usr/local/apache2
+        command: ["/usr/local/bin/httpd-foreground"]
+      - name: test-web2
+        image: httpd:latest
+        ports:
+        - name: http
+          containerPort: 80
+        resources:
+          requests:
+            cpu: 200m
+            memory: 1024Mi
+        volumeMounts:
+        - name: config2
+          mountPath: /usr/local/apache2
+        workingDir: /usr/local/apache2
+        command: ["/usr/local/bin/httpd-foreground"]
+
+      volumes:
+      - name: config
+        persistentVolumeClaim:
+          claimName: storage-server
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test
+  namespace: test
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+      - test.internal
+      - test.jayflory.net
+  rules:
+  - host: test.internal
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: test-web
+            port:
+              number: 80

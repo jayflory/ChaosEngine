@@ -1,0 +1,17 @@
+[Unit]
+Description=Mount unit for var-log over gluster
+Requires=network-online.target
+After=network-online.target
+Before=syslog.service
+
+[Service]
+Type=simple
+RemainAfterExit=yes
+ExecStartPre=/usr/sbin/modprobe fuse
+ExecStart=/bin/bash -c '/bin/sleep 4 ; exitCode=1; exitCode="$(/usr/bin/mount -t glusterfs -o log-level=NONE,backup-volfile-servers={{ srvr1 }}:{{ srvr2 }} {{ primary }}:/{{ hostname }} /var/log)" ; /bin/sleep 4 ; if /bin/grep -q -P "/var/log" /proc/mounts; then exit 0; else exit 1; fi;'
+Restart=on-failure
+RestartSec=8
+
+[Install]
+WantedBy=syslog.service
+WantedBy=multi-user.target

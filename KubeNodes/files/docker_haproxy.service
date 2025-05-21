@@ -1,0 +1,16 @@
+[Unit]
+Description=Start HAProxy container
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=simple
+RemainAfterExit=yes
+ExecStart=/usr/sbin/haproxy_start.sh
+StandardOutput=null
+StandardError=journal
+Restart=on-failure
+RestartSec=8
+
+[Install]
+WantedBy=multi-user.target

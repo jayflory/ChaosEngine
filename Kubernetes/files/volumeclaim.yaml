@@ -1,0 +1,15 @@
+# file: pvc-from-external-gluster.yaml
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: example-claim-kadalu
+spec:
+  # Add 'kadalu.' to name from KadaluStorage kind
+  storageClassName: kadalu.ext-config
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      # This needs to be set using 'kadalu-quotad'
+      storage: 50Mi

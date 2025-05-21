@@ -1,0 +1,15 @@
+[Unit]
+Description=Basic 
+Before=glusterd.service etcd.service syslog.service
+
+[Service]
+Type=simple
+RemainAfterExit=yes
+ExecStartPre=/usr/sbin/modprobe usb_storage
+ExecStart=/usr/sbin/basic-mounts.sh
+StandardOutput=null
+StandardError=journal
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,361 @@
+---
+#
+# This playbook is designed to prepare a Raspberry pi 4 to be part of a Kubernetes cluster.
+#
+# Assumptions:
+# 1. Raspberry Pi 4
+# 2. Installed OS:  Basic Rasbpian Ubuntu/Debian.
+#
+# add the apt-key for the google kube repository
+# add the repository and then update apt
+#
+
+- hosts: all
+  become: true
+  become_user: root
+  gather_facts: true
+
+  vars:
+    ssh_key: '/root/playbooks/files/authorized_keys'
+    hosts_file: '/root/playbooks/files/hosts'
+    log_mounts:
+      pi1:
+        primary: 'etcd1'
+        srvr1: 'etcd2'
+        srvr2: 'etcd3'
+      pi2:
+        primary: 'etcd2'
+        srvr1: 'etcd1'
+        srvr2: 'etcd3'
+      pi3:
+        primary: 'etcd3'
+        srvr1: 'etcd1'
+        srvr2: 'etcd2'
+      pi4:
+        primary: 'etcd1'
+        srvr1: 'etcd2'
+        srvr2: 'etcd3'
+      pi5:
+        primary: 'etcd2'
+        srvr1: 'etcd1'
+        srvr2: 'etcd3'
+      pi6:
+        primary: 'etcd3'
+        srvr1: 'etcd1'
+        srvr2: 'etcd2'
+      pi7:
+        primary: 'etcd1'
+        srvr1: 'etcd2'
+        srvr2: 'etcd3'
+      pi8:
+        primary: 'etcd2'
+        srvr1: 'etcd1'
+        srvr2: 'etcd3'
+      pi9:
+        primary: 'etcd3'
+        srvr1: 'etcd1'
+        srvr2: 'etcd2'
+      pi10:
+        primary: 'etcd1'
+        srvr1: 'etcd2'
+        srvr2: 'etcd3'
+    hostname: "{{ ansible_facts['nodename'] }}"
+    primary: "{{ log_mounts[hostname]['primary'] }}"
+    srvr1: "{{ log_mounts[hostname]['srvr1'] }}"
+    srvr2: "{{ log_mounts[hostname]['srvr2'] }}"
+    cri-docker-version:  "cri-dockerd-0.3.17"
+
+#
+# Tasks
+#
+  tasks:
+    #
+    # Remove unneeded packages that are part of the standard Ubuntu distribution
+    #
+    - name: Remove UnWanted Packages
+      apt:
+        pkg:
+          - cloud-init
+          - apparmor
+          - plymouth
+          - unattended-upgrades
+          - avahi-daemon
+          - lvm2
+          - snapd
+          - modemmanager
+        state: absent
+
+    #
+    # Setup the Kubernetes repository
+    #
+    
+    # The apt-key no longer works as expected
+    - name: Check if file exists
+      stat:
+        path: "/etc/apt/keyrings/kubernetes-apt-keyring.gpg"
+      register: result
+
+    - name: GetKubeAptKey2
+      shell: "/usr/bin/curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | /usr/bin/gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg"
+      when: not result.stat.exists
+
+    - name: kubernetes
+      apt_repository: 
+        repo: 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /'
+        state: present
+      register: task_result
+
+    - name: UpdateApt
+      shell: 'apt-get update'
+      when: task_result is changed
+
+    #
+    # Basic file copies
+    #
+    - name: copy hosts file
+      copy:
+        src: './files/hosts'
+        dest:  '/etc/hosts'
+        owner: root
+        group: root
+        mode: 0644
+
+    #
+    # Setup some mounting services
+    #
+    # Note we are basically using the log_mounts directory defined above to setup the var-log mount
+    
+    # The syslog.service requires modification, we want it to start only after
+    # the var-log.service starts which mounts the gluster share set aside for the
+    # servers /var/log directory
+    - name: copy syslog service file
+      copy:
+        src: './files/syslog.service'
+        dest: '/usr/lib/systemd/system/syslog.service'
+        owner: root
+        group: root
+        mode: 0644
+      notify:
+        - restart_syslog
+
+    - name: Find rsyslog config files that are not needed
+      find:
+        paths: /etc/rsyslog.d
+        file_type: file
+        excludes: 
+          - "10-all.conf"
+      register: found_files
+
+    - name: Delete unneeded syslog files
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      with_items: "{{ found_files['files'] }}"
+
+    - name: copy syslog config
+      copy:
+        src: './files/10-all.conf'
+        dest: '/etc/rsyslog.d/10-all.conf'
+        owner: root
+        group: root
+        mode: 0644
+      notify:
+        - restart_syslog
+    
+    # Build the var-log.service that mounts the gluster share for /var/log
+    - name: create the var-log.service file
+      template:
+        src: './files/var-log.service.template'
+        dest: '/etc/systemd/system/var-log.service'
+        owner: root
+        group: root
+        mode: 0644
+      notify:
+        - reload_systemd
+      register: rask_result
+
+    - name: enable var-log.service
+      shell: '/usr/bin/systemctl enable var-log.service'
+      when: task_result is changed
+
+    #
+    # Enable CGroup CPUSet and CGroup memory
+    #
+    - name: Enable memory control group subsystem
+      replace:
+        #https://wiki.ubuntu.com/ARM/RaspberryPi#Raspberry_Pi_packages
+        path: /boot/firmware/cmdline.txt
+        regexp: '(fixrtc)$'
+        replace: '\1 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory'
+      register: task_result
+
+    - name: Reboot immediately if there was a change.
+      shell: "sleep 5 && reboot"
+      async: 1
+      poll: 0
+      when: task_result is changed
+
+    - name: Wait for the reboot to complete if there was a change.
+      wait_for_connection:
+        connect_timeout: 20
+        sleep: 5
+        delay: 5
+        timeout: 300
+      when: task_result is changed
+
+    #
+    # Disable the swap
+    #
+    - name: Stop swap 2
+      service:
+        name: swap.target
+        state: stopped
+        enabled: false
+
+    #
+    # Configure Docker
+    #
+    - name: Install Docker
+      package:
+        name: docker.io
+        state: latest
+
+    - name: Configue Docker to use SystemD
+      copy:
+        src: './files/daemon.json'
+        dest: '/etc/docker/daemon.json'
+        owner: root
+        mode: 0644
+      notify:
+        restart_docker
+
+    #
+    # Install Kubernetes
+    #
+    - name: Install Kubernetes
+      package:
+        name:
+         - kubelet
+         - kubeadm
+        state: latest
+        - name: create haproxy configuration directory
+    
+    - name: Kubernetes Etcd Subdirectory
+      file:
+        path: /etc/kubernetes/etcd
+        state: directory
+        mode: 0755
+
+    - name: Etcd ca cert
+      copy: 
+        src: '../StorageNodes/files/ca.crt'
+        dest: '/etc/kubernetes/etcd/ca.crt'
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: Etcd client cert
+      copy: 
+        src: '../StorageNodes/files/etcd-client.crt'
+        dest: '/etc/kubernetes/etcd/client.crt'
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: Etcd client key
+      copy: 
+        src: '../StorageNodes/files/etcd-client.key'
+        dest: '/etc/kubernetes/etcd/client.key'
+        owner: root
+        group: root
+        mode: 0600
+
+    #
+    # Setup cri-docker
+    #
+    - name: Kubernetes Etcd Subdirectory
+      file:
+        path: /home/ubuntu/cri
+        state: directory
+        mode: 0755
+
+    - name: Copy up the cri-docker file
+      copy:
+        src: "./files/{{ cri-docker-version }}.arm64.tgz"
+        dest: "/home/ubuntu/cri/{{ cri-docker-version }}.arm64.tgz"
+        owner: root
+        group: root
+        mode: 0644
+      register: task_result
+    
+    - block:
+      - name: Expand compressed library
+        shell:
+          cmd: "/usr/bin/tar xzf {{ cri-docker-version }}.arm64.tgz"
+          chdir: "/home/ubuntu/cri"
+
+      - name: Install cri-docker
+        shell:
+          cmd: "/usr/bin/install -o root -g root -m 0755 cri-dockerd /usr/local/bin/cri-dockerd"
+          chdir: "/home/ubuntu/cri/cri-dockerd"
+
+      - name: Install cri-docker.service
+        copy:
+          src: "./files/cri-docker.service"
+          dest: "/etc/systemd/system/cri-docker.service"
+          owner: root
+          group: root
+          mode: 0700
+
+      - name: Install cri-docker.socket
+        copy:
+          src: "./files/cri-docker.socket"
+          dest: "/etc/systemd/system/cri-docker.socket"
+          owner: root
+          group: root
+          mode: 0700
+
+      - name: SystemD daemon reload
+        shell:
+          cmd: "/usr/bin/systemctl daemon-reload"
+
+      - name: Enable socket
+        service: 
+          name: cri-docker.socket
+          state: started
+          enabled: true
+
+      - name: Enable service
+        service: 
+          name: cri-docker.service
+          state: started
+          enabled: true
+
+      when: task_result is changed
+
+
+  #
+  # Handlers for restarting services and the like.
+  #
+  handlers:
+    - name: restart_ssh
+      service:
+        name: ssh
+        state: restarted
+        enabled: true
+
+    - name: restart_docker
+      service:
+        name: docker
+        state: restarted
+        enabled: true
+
+    - name: reload_systemd
+      shell: /usr/bin/systemctl daemon-reload
+
+    - name: restart_syslog
+      service:
+        name: syslog
+        state: restarted
+        enabled: true
+      

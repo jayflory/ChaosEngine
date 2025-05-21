@@ -1,0 +1,443 @@
+---
+#
+# This playbook is designed to prepare a Raspberry pi 4 to add an HAProxy container
+#
+# Assumptions:
+# 1. Raspberry Pi 4
+# 2. Installed OS:  Basic Rasbpian Ubuntu/Debian.
+#
+# 
+# We are going to assume docker.io is already installed.
+
+- hosts: all
+  become: true
+  become_user: root
+  gather_facts: true
+
+  vars:
+    etcdversion: "etcd-v3.4.37-linux-arm64"
+    hostname: "{{ ansible_facts['nodename'] }}"
+    ipv4address: "{{ ansible_facts['default_ipv4']['address'] }}"
+  
+#
+# Tasks
+#
+  tasks:
+    #
+    # Packages
+    #
+    #- name: remove UnWanted Packages
+    #  apt:
+    #    pkg:
+    #      - cloud-init
+    #      - apparmor
+    #      - plymouth
+    #      - unattended-upgrades
+    #      - avahi-daemon
+    #      - lvm2
+    #      - snapd
+    #      - modemmanager
+    #    state: absent
+
+    - name: required packages
+      apt:
+        pkg:
+          - glusterfs-server
+          - net-tools
+        state: present
+
+    #
+    # Basic file copies
+    #
+    - name: copy hosts file
+      copy:
+        src: './files/hosts'
+        dest:  '/etc/hosts'
+        owner: root
+        group: root
+        mode: 0644
+
+    #
+    # Cron jobs.
+    #
+    # Make sure that the USB driver doesn't go to "sleep"
+    - name: Touch sda
+      cron:
+        minute: "*/5"
+        name: WakeSDA
+        job: "/bin/touch /dev/sda &> /dev/null"
+        user: root
+
+    - name: Touch sdb
+      cron:
+        minute: "*/5"
+        name: WakeSDB
+        job: "/bin/touch /dev/sdb &> /dev/null"
+        user: root
+
+    - name: Make sure resolved doesn't doesn't die
+      cron:
+        minute: "*/5"
+        name: EnsureResolved
+        job: "/usr/bin/systemctl start systemd-resolved.service"
+        user: root
+
+    #
+    # Create partitions on sdb
+    #
+    - name: Create home partition
+      community.general.parted:
+        device: /dev/sdb
+        number: 1
+        state: present
+        fs_type: ext4
+        part_start: 1024MB
+        part_end: 100GB
+        part_type: primary
+        label: "gpt"
+
+    - name: Create log partition
+      community.general.parted:
+        device: /dev/sdb
+        number: 2
+        state: present
+        fs_type: ext4
+        part_start: 100GB
+        part_end: 200GB
+        part_type: primary
+        label: "gpt"
+
+    # The docker partition is not really used as Docker is really needed
+    # Here for legacy reasons
+    - name: Create docker partition
+      community.general.parted:
+        device: /dev/sdb
+        number: 3
+        state: present
+        fs_type: ext4
+        part_start: 200GB
+        part_end: 300GB
+        part_type: primary
+        label: "gpt"
+
+    - name: Create etcd partition
+      community.general.parted:
+        device: /dev/sdb
+        number: 4
+        state: present
+        fs_type: ext4
+        part_start: 300GB
+        part_end: 400GB
+        part_type: primary
+        label: "gpt"
+
+    - name: Remaining space for LVS
+      community.general.parted:
+        device: /dev/sdb
+        number: 5
+        state: present
+        part_start: 400GB
+        part_end: 1000GB
+        part_type: primary
+        label: "gpt"
+
+    - name: Kubernetes Storage
+      community.general.parted:
+        device: /dev/sda
+        number: 1
+        state: present
+        fs_type: xfs
+        part_start: 0%
+        part_end: 100%
+        part_type: primary
+        label: "gpt"
+  
+    #
+    # Create the Logical Volumes system
+    #
+    - name: Create a volume group on top of /dev/sdb5 with physical extent size = 4MB
+      community.general.lvg:
+        vg: pi_logs
+        pvs: /dev/sdb5
+        pesize: 4M
+    # Heketi will create it's own logical volume group on /dev/sda
+
+    #
+    # Create logical volumes
+    #
+    - name: Create Volumes for logs
+      community.general.lvol:
+        vg: pi_logs
+        lv: "brick{{ item }}"
+        size: 25G
+      loop: "{{ range(1, 11)|list }}"
+
+    #
+    # Create the basic mount service
+    #
+    - name: basic-mounts script
+      copy:
+        src: './files/basic-mounts.sh'
+        dest: '/usr/sbin/basic-mounts.sh'
+        owner: root
+        group: root
+        mode: 0700
+
+    - name: basic-mounts service
+      copy:
+        src: './files/basic-mounts.service'
+        dest: '/etc/systemd/system/basic-mounts.service'
+        owner: root
+        group: root
+        mode: 0700
+      register: task_result
+
+    - name: kadalu-mounts service
+      copy:
+        src: './files/kadalu-mounts.service'
+        dest: '/etc/systemd/system/kadalu-mounts.service'
+
+    - name: reload_systemd
+      shell: /usr/bin/systemctl daemon-reload
+      when: task_result is changed
+
+    - name: enable basic mounts
+      service: 
+        name: basic-mounts.service
+        state: started
+        enabled: true
+      when: task_result is changed
+
+    - name: enable kadalu mounts
+      service:
+        name: kadalu-mounts.service
+        state: started
+        enabled: true
+      when: task_result is changed 
+
+    # 
+    # Note that Etcd is installed manually
+    #
+    # You will need to download a copy of etcd to your workstation
+
+    # We depend upon /home to be already mounted to prevent wear on the MicroSD
+    - name: Copy up the etcd version
+      copy:
+        src: "./files/{{ etcdversion }}.tar.gz"
+        dest: "/home/ubuntu/etcd/{{ etcdversion }}.tar.gz"
+        owner: root
+        group: root
+        mode: 0644
+      register: task_result
+    
+    - block:
+      - name: Expand compresses library
+        shell:
+          cmd: "/usr/bin/tar xzf {{ etcdversion }}.tar.gz"
+          chdir: "/home/ubuntu/etcd"
+
+      - name: Copy etcd to /usr/local/bin
+        shell:
+          cmd: "cp etcd etcdctl /usr/local/bin"
+          chdir: "/home/ubuntu/etcd/{{ etcdversion }}"
+
+      - name: Add etcd group
+        group:
+          name: etcd
+          state: present
+          gid: 998
+
+      - name: Add etcd user
+        user:
+          name: etcd
+          state: present
+          uid: 18407
+          group: etcd
+          shell: '/sbin/nologin'
+
+      - name: Set directory permissions on etc
+        file:
+          path: /var/lib/etcd
+          owner: etcd
+          group: etcd
+          mode: 0755
+          state: directory
+
+      - name: Makessure /home/etcd exists
+        file:
+          path: /home/etcd
+          owner: etcd
+          group: etcd
+          mode: 0755
+          state: directory
+
+      - name: Copy ca.crt
+        copy:
+          src: './files/ca.crt'
+          dest: '/home/etcd/ca.crt'
+          owner: etcd
+          group: etcd
+          mode: 0644
+          state: present
+      
+      - name: Copy etcd-client.crt
+        copy:
+          src: './files/etcd-client.crt'
+          dest: '/home/etcd/etcd-client.crt'
+          owner: ubuntu
+          group: ubuntu
+          mode: 0644
+          state: present
+
+      - name: Copy etcd-client.key
+        copy:
+          src: './files/etcd-client.key'
+          dest: '/home/etcd/etcd-client.key'
+          owner: ubuntu
+          group: ubuntu
+          mode: 0400
+          state: present
+
+      - name: Copy node cert
+        copy:
+          src: "./files/{{ hostname }}.crt"
+          dest: "/home/etcd/{{ hostname }}.crt"
+          owner: etcd
+          group: etcd
+          mode: 0644
+          state: present
+
+      - name: Copy node key
+        copy:
+          src: "./files/{{ hostname }}.key"
+          dest: "/home/etcd/{{ hostname }}.key"
+          owner: etcd
+          group: etcd
+          mode: 0400
+          state: present
+
+      - name: create the etcd.service file
+        template:
+          src: './files/etcd.service.template'
+          dest: '/etc/systemd/system/etcd.service'
+          owner: root
+          group: root
+          mode: 0644
+        register: task_result2
+
+      - name: reload_systemd2
+        shell: /usr/bin/systemctl daemon-reload
+        when: task_result2 is changed
+
+      when: task_result is changed
+      
+    #
+    # Create a new service that mounts the log bricks
+    #
+    - name: log-mounts script
+      copy:
+        src: './files/log-mounts.sh'
+        dest: '/usr/sbin/log-mounts.sh'
+        owner: root
+        group: root
+        mode: 0700
+
+    - name: log-mounts service
+      copy:
+        src: './files/log-mounts.service'
+        dest: '/etc/systemd/system/log-mounts.service'
+        owner: root
+        group: root
+        mode: 0700
+      register: task_result
+
+    - name: reload_systemd4
+      shell: /usr/bin/systemctl daemon-reload
+      when: task_result is changed
+
+    - name: enable log mounts
+      service: 
+        name: log-mounts.service
+        state: started
+        enabled: true
+      when: task_result is changed
+
+    #
+    # Ensure the Gluster log volumes are created
+    #
+    # To be executed only on etcd1
+    # To install the Ansible module: ansible-galaxy collection install gluster.gluster
+    #
+    # You may find it necessary to get gluster started on all nodes first
+    - block:
+      - name: Ensure gluster is started
+        service:
+          name: glusterd.service
+          state: started
+          enabled: true
+
+      - name: Add log bricks
+        gluster.gluster.gluster_volume:
+          state: present
+          name: "pi{{ item }}"
+          bricks: "/var/log/pi_logs/brick{{ item }}"
+          replicas: 3
+          start_on_create: true
+          transport: "tcp"
+          force: true
+          cluster:
+            - 192.168.1.40
+            - 192.168.1.41
+            - 192.168.1.42
+        loop: "{{ range(1, 11)|list }}"
+
+      - name: Add KubeStorage
+        gluster.gluster.gluster_volume:
+          state: present
+          name: "KubeStorage"
+          bricks: "/var/log/KubeStorage"
+          replicas: 3
+          start_on_create: true
+          transport: "tcp"
+          force: true
+          cluster:
+            - 192.168.1.40
+            - 192.168.1.41
+            - 192.168.1.42
+
+      when: '"etcd1" in hostname'
+
+    #
+    # Add a syslog configuration to etcd3 to have it listen for log traffic
+    #
+    - block:
+
+      - name: Create remote log conf file
+        copy:
+          src: './files/10-remote.conf'
+          dest: '/etc/rsyslog.d/10-remote.conf'
+          owner: root
+          group: root
+          mode: 0644
+        register: task_result
+      
+      - name: Restart syslog
+        service: 
+          name: rsyslog.service
+          state: restarted
+        when: task_result is changed
+
+      when: '"etcd3" in hostname'
+
+    #
+    # Finally ensure glusterd and etcd are enabled
+    #
+    - name: enable glusterd
+      service: 
+        name: glusterd.service
+        enabled: true
+
+    - name: enable etcd
+      service: 
+        name: etcd.service
+        enabled: true

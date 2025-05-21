@@ -1,0 +1,31 @@
+[Unit]
+Description=etcd key-value store
+Documentation=https://github.com/etcd-io/etcd
+After=basic-mounts.service network.target
+
+[Service]
+User=etcd
+Type=notify
+Environment=ETCD_DATA_DIR=/var/lib/etcd
+Environment=ETCD_NAME={{ hostname }}
+Environment=ETCD_UNSUPPORTED_ARCH=arm64
+ExecStart=/usr/local/bin/etcd \
+ --initial-advertise-peer-urls=https://{{ ipv4address }}:2380 \
+ --listen-peer-urls=https://{{ ipv4address }}:2380 \
+ --listen-client-urls=https://{{ ipv4address }}:2379 \
+ --advertise-client-urls=https://{{ ipv4address }}:2379 \
+ --initial-cluster-token=etcd-cluster-1 \
+ --initial-cluster etcd1=https://192.168.1.40:2380,etcd2=https://192.168.1.41:2380,etcd3=https://192.168.1.42:2380 \
+ --client-cert-auth --trusted-ca-file=/home/etcd/ca.crt \
+ --cert-file=/home/etcd/{{ hostname }}.crt --key-file=/home/etcd/{{ hostname }}.key \
+ --peer-client-cert-auth --peer-trusted-ca-file=/home/etcd/ca.crt \
+ --peer-cert-file=/home/etcd/{{ hostname }}.crt --peer-key-file=/home/etcd/{{ hostname }}.key \
+ --initial-cluster-state=new \
+ --heartbeat-interval=1000 \
+ --election-timeout=5000
+Restart=always
+RestartSec=10s
+LimitNOFILE=40000
+
+[Install]
+WantedBy=multi-user.target

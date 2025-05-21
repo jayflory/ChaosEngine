@@ -1,0 +1,84 @@
+---
+#
+# This playbook is designed to prepare a Raspberry pi 4 to add an HAProxy container
+#
+# Assumptions:
+# 1. Raspberry Pi 4
+# 2. Installed OS:  Basic Rasbpian Ubuntu/Debian.
+#
+# 
+# We are going to assume docker.io is already installed.
+
+- hosts: all
+  become: true
+  become_user: root
+  gather_facts: false
+  
+#
+# Tasks
+#
+  tasks:
+
+    #
+    # Create the docker macvlan network
+    #
+    - name: Create a network
+      community.docker.docker_network:
+        name: lb-network
+        state: present
+        driver: macvlan
+        driver_options:
+          parent: "eth0"
+        ipam_config:
+          - subnet: '192.168.1.0/24'
+            gateway: '192.168.1.1'
+
+    #
+    # Setup service
+    #
+
+    - name: create haproxy configuration directory
+      file:
+        path: /var/log/haproxy
+        state: directory
+        mode: 0755
+
+    - name: create haproxy run directory
+      file:
+        path: /var/log/haproxy/run
+        state: directory
+        mode: 0777
+
+    - name: copy the configuration file
+      copy:
+        src: './files/haproxy.cfg'
+        dest: '/var/log/haproxy/haproxy.cfg'
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: copy file service start
+      copy:
+        src: './files/haproxy_start.sh'
+        dest:  '/usr/sbin/haproxy_start.sh'
+        owner: root
+        group: root
+        mode: 0700
+
+    - name: copy SystemD service file
+      copy:
+        src: './files/docker_haproxy.service'
+        dest: '/usr/lib/systemd/system/docker_haproxy.service'
+        owner: root
+        group: root
+        mode: 0644
+      notify:
+        - reload_systemd
+
+  #
+  # Handlers for restarting services and the like.
+  #
+  handlers:
+    - name: reload_systemd
+      shell: /usr/bin/systemctl daemon-reload
+      

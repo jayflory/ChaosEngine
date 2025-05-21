@@ -1,0 +1,15 @@
+[Unit]
+Description=Log mount points
+Before=glusterd.service etcd.service
+
+[Service]
+Type=simple
+RemainAfterExit=yes
+ExecStartPre=/usr/sbin/modprobe usb_storage
+ExecStart=/usr/sbin/log-mounts.sh
+StandardOutput=null
+StandardError=journal
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

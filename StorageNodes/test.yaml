@@ -1,0 +1,23 @@
+---
+#
+# This playbook is designed to prepare a Raspberry pi 4 to add an HAProxy container
+#
+# Assumptions:
+# 1. Raspberry Pi 4
+# 2. Installed OS:  Basic Rasbpian Ubuntu/Debian.
+#
+# 
+# We are going to assume docker.io is already installed.
+
+- hosts: all
+  become: true
+  become_user: root
+  gather_facts: true
+
+#
+# Tasks
+#
+  tasks:
+    - name: Print all available facts
+      ansible.builtin.debug:
+        var: ansible_facts

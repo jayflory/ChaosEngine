@@ -1,0 +1,77 @@
+---
+#
+# This playbook is designed to prepare a Raspberry pi 4 to be part of a Kubernetes cluster.
+#
+# Assumptions:
+# 1. Raspberry Pi 4
+# 2. Installed OS:  Basic Rasbpian Ubuntu/Debian.
+#
+# add the apt-key for the google kube repository
+# add the repository and then update apt
+#
+
+- hosts: all
+  become: true
+  become_user: root
+  gather_facts: true
+
+  vars:
+    ssh_key: '/root/playbooks/files/authorized_keys'
+    hosts_file: '/root/playbooks/files/hosts'
+    log_mounts:
+      pi1:
+        primary: 'etcd1'
+        srvr1: 'etcd2'
+        srvr2: 'etcd3'
+      pi2:
+        primary: 'etcd2'
+        srvr1: 'etcd1'
+        srvr2: 'etcd3'
+      pi3:
+        primary: 'etcd3'
+        srvr1: 'etcd1'
+        srvr2: 'etcd2'
+      pi4:
+        primary: 'etcd1'
+        srvr1: 'etcd2'
+        srvr2: 'etcd3'
+      pi5:
+        primary: 'etcd2'
+        srvr1: 'etcd1'
+        srvr2: 'etcd3'
+      pi6:
+        primary: 'etcd3'
+        srvr1: 'etcd1'
+        srvr2: 'etcd2'
+      pi7:
+        primary: 'etcd1'
+        srvr1: 'etcd2'
+        srvr2: 'etcd3'
+      pi8:
+        primary: 'etcd2'
+        srvr1: 'etcd1'
+        srvr2: 'etcd3'
+      pi9:
+        primary: 'etcd3'
+        srvr1: 'etcd1'
+        srvr2: 'etcd2'
+      pi10:
+        primary: 'etcd1'
+        srvr1: 'etcd2'
+        srvr2: 'etcd3'
+    hostname: "{{ ansible_facts['nodename'] }}"
+    primary: "{{ log_mounts[hostname]['primary'] }}"
+    srvr1: "{{ log_mounts[hostname]['srvr1'] }}"
+    srvr2: "{{ log_mounts['{{ hostname }}']['srvr2'] }}"
+
+#
+# Tasks
+#
+  tasks:
+    #
+    # Remove unneeded packages that are part of the standard Ubuntu distribution
+    #
+    
+    - name: Print all available facts
+      ansible.builtin.debug:
+        var: srvr1

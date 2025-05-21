@@ -1,0 +1,18 @@
+# file: external-config.yaml
+---
+apiVersion: kadalu-operator.storage/v1alpha1
+kind: KadaluStorage
+metadata:
+  name: ext-config
+  namespace: kadalu
+spec:
+  type: External
+  # Omitting 'single_pv_per_pool' or using 'false' as a value will create
+  # 1 PV : 1 Subdir in external gluster volume
+  single_pv_per_pool: false
+  details:
+    gluster_hosts: [ 192.168.1.40, 192.168.1.41, 192.168.1.42 ]
+    # gluster_host: gluster1.kadalu.io
+    gluster_volname: KubeStorage
+    gluster_options: log-level=DEBUG
+

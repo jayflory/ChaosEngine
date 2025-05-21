@@ -1,0 +1,16 @@
+[Unit]
+Description=Heketi mount points
+Before=glusterd.service etcd.service
+After=var-log.mount
+
+[Service]
+Type=simple
+RemainAfterExit=yes
+ExecStartPre=/usr/sbin/modprobe usb_storage
+ExecStart=bash -c "sleep 7; /usr/bin/mount -t xfs /dev/sda1 /var/log/KubeStorage"
+StandardOutput=null
+StandardError=journal
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
